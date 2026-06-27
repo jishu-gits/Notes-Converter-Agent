@@ -16,94 +16,51 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { getJobStatus, uploadPDF } from "./upload-api";
+import {
+  downloadMarkdown,
+  downloadPDF,
+  getGeneratedMarkdown,
+  getJobStatus,
+  uploadPDF,
+  type JobStatus,
+} from "./upload-api";
 
 const maxFileSize = 25 * 1024 * 1024;
-
-const processingSteps = [
-  "Uploading",
-  "Extracting text",
-  "Generating Markdown",
-  "Formatting",
-  "Complete",
-] as const;
-
-const placeholderMarkdown = `# Cognitive Psychology Lecture Notes
-
-## Core Theme
-
-Attention and memory work together. New information becomes useful when it is encoded, connected to prior knowledge, and retrieved repeatedly over time.
-
-## Key Concepts
-
-- Working memory has limited capacity.
-- Retrieval practice strengthens long-term recall.
-- Spaced review is more effective than cramming.
-- Feedback helps correct inaccurate mental models.
-
-## Study Sequence
-
-1. Preview the lecture outline.
-2. Convert each section into one question.
-3. Answer from memory before checking notes.
-4. Revisit missed items after 24 hours.
-
-| Concept | Practical Strategy | Why It Helps |
-| --- | --- | --- |
-| Encoding | Create examples | Builds meaning |
-| Retrieval | Self-test | Strengthens recall |
-| Spacing | Review later | Reduces forgetting |
-
-\`\`\`ts
-const reviewPlan = ["preview", "recall", "check", "revise"];
-\`\`\`
-
-> Important note: Recognition feels fluent, but recall proves whether the material is actually usable.
-
-- [x] Identify the lecture objective
-- [x] Extract important definitions
-- [ ] Create practice questions
-- [ ] Schedule the next review`;
+const maxPollAttempts = 120;
 
 type UploadStatus = "idle" | "ready" | "processing" | "complete";
+type DownloadTarget = "markdown" | "pdf";
 
 export function UploadCard() {
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const activeRequestRef = React.useRef(0);
+  const copyFeedbackTimerRef = React.useRef<number | null>(null);
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
+  const [jobId, setJobId] = React.useState<string | null>(null);
+  const [markdown, setMarkdown] = React.useState("");
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [isDragging, setIsDragging] = React.useState(false);
   const [status, setStatus] = React.useState<UploadStatus>("idle");
-  const [processingStepIndex, setProcessingStepIndex] = React.useState(0);
+  const [processingLabel, setProcessingLabel] = React.useState("Uploading");
+  const [progress, setProgress] = React.useState(0);
+  const [downloadTarget, setDownloadTarget] =
+    React.useState<DownloadTarget | null>(null);
+  const [copySucceeded, setCopySucceeded] = React.useState(false);
 
   React.useEffect(() => {
-    if (status !== "processing") {
-      return;
-    }
-
-    let isCancelled = false;
-    const timer = window.setTimeout(() => {
-      void getJobStatus("mock-upload-job").then(() => {
-        if (isCancelled) {
-          return;
-        }
-
-        if (processingStepIndex >= processingSteps.length - 1) {
-          setStatus("complete");
-          return;
-        }
-
-        setProcessingStepIndex((currentStep) => currentStep + 1);
-      });
-    }, 400);
-
     return () => {
-      isCancelled = true;
-      window.clearTimeout(timer);
+      activeRequestRef.current += 1;
+
+      if (copyFeedbackTimerRef.current) {
+        window.clearTimeout(copyFeedbackTimerRef.current);
+      }
     };
-  }, [processingStepIndex, status]);
+  }, []);
 
   const handleChooseFile = () => {
-    inputRef.current?.click();
+    if (status !== "processing") {
+      inputRef.current?.click();
+    }
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,15 +89,23 @@ export function UploadCard() {
       return;
     }
 
+    activeRequestRef.current += 1;
     setSelectedFile(file);
+    setJobId(null);
+    setMarkdown("");
+    setCopySucceeded(false);
     setErrorMessage(null);
     setStatus("ready");
-    setProcessingStepIndex(0);
+    setProgress(0);
+    setProcessingLabel("Uploading");
   };
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    setIsDragging(true);
+
+    if (status !== "processing") {
+      setIsDragging(true);
+    }
   };
 
   const handleDragLeave = () => {
@@ -150,6 +115,10 @@ export function UploadCard() {
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
+
+    if (status === "processing") {
+      return;
+    }
 
     const file = event.dataTransfer.files[0];
 
@@ -163,32 +132,178 @@ export function UploadCard() {
     resetUpload();
   };
 
-  const handleConvert = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
+  const handleConvert = (event?: React.MouseEvent<HTMLButtonElement>) => {
+    event?.stopPropagation();
 
-    if (!selectedFile) {
+    if (!selectedFile || status === "processing") {
       return;
     }
 
+    void startConversion(selectedFile);
+  };
+
+  const startConversion = async (file: File) => {
+    const requestId = activeRequestRef.current + 1;
+    activeRequestRef.current = requestId;
     setErrorMessage(null);
-    setProcessingStepIndex(0);
+    setCopySucceeded(false);
+    setJobId(null);
+    setMarkdown("");
+    setProgress(8);
+    setProcessingLabel("Uploading");
     setStatus("processing");
-    void uploadPDF(selectedFile);
+
+    try {
+      const upload = await uploadPDF(file);
+
+      if (!isActiveRequest(requestId)) {
+        return;
+      }
+
+      setJobId(upload.jobId);
+      setProgress(15);
+      await pollJob(upload.jobId, requestId);
+    } catch (error) {
+      if (!isActiveRequest(requestId)) {
+        return;
+      }
+
+      setStatus("ready");
+      setProgress(0);
+      setErrorMessage(getErrorMessage(error));
+    }
+  };
+
+  const pollJob = async (nextJobId: string, requestId: number) => {
+    for (let attempt = 1; attempt <= maxPollAttempts; attempt += 1) {
+      await waitForPollInterval();
+
+      if (!isActiveRequest(requestId)) {
+        return;
+      }
+
+      const nextStatus = await getJobStatus(nextJobId);
+
+      if (!isActiveRequest(requestId)) {
+        return;
+      }
+
+      setProcessingLabel(getStatusLabel(nextStatus));
+      setProgress(estimateProgress(nextStatus, attempt));
+
+      if (nextStatus.status === "failed") {
+        throw new Error(nextStatus.error ?? "Backend conversion failed.");
+      }
+
+      if (nextStatus.status === "completed") {
+        const generatedMarkdown = await getGeneratedMarkdown(
+          nextJobId,
+          nextStatus,
+        );
+
+        if (!isActiveRequest(requestId)) {
+          return;
+        }
+
+        if (!generatedMarkdown.trim()) {
+          throw new Error("Backend returned empty markdown.");
+        }
+
+        setMarkdown(generatedMarkdown);
+        setProcessingLabel("Completed");
+        setProgress(100);
+        setStatus("complete");
+        return;
+      }
+    }
+
+    throw new Error("Conversion timed out. Please retry.");
   };
 
   const resetUpload = () => {
+    activeRequestRef.current += 1;
     setSelectedFile(null);
+    setJobId(null);
+    setMarkdown("");
+    setCopySucceeded(false);
     setErrorMessage(null);
     setIsDragging(false);
     setStatus("idle");
-    setProcessingStepIndex(0);
+    setProgress(0);
+    setProcessingLabel("Uploading");
   };
+
+  const handleCopyMarkdown = async () => {
+    try {
+      setErrorMessage(null);
+      await navigator.clipboard.writeText(markdown);
+      setCopySucceeded(true);
+
+      if (copyFeedbackTimerRef.current) {
+        window.clearTimeout(copyFeedbackTimerRef.current);
+      }
+
+      copyFeedbackTimerRef.current = window.setTimeout(() => {
+        setCopySucceeded(false);
+      }, 1600);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    }
+  };
+
+  const handleDownloadMarkdown = async () => {
+    if (!jobId) {
+      setErrorMessage("No completed job is available to download.");
+      return;
+    }
+
+    setDownloadTarget("markdown");
+    setErrorMessage(null);
+
+    try {
+      const blob = await downloadMarkdown(jobId);
+      saveBlob(blob, `${getFileStem(selectedFile?.name ?? "notes")}.md`);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDownloadTarget(null);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!jobId) {
+      setErrorMessage("No completed job is available to download.");
+      return;
+    }
+
+    setDownloadTarget("pdf");
+    setErrorMessage(null);
+
+    try {
+      const blob = await downloadPDF(jobId);
+      saveBlob(blob, `${getFileStem(selectedFile?.name ?? "notes")}.pdf`);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setDownloadTarget(null);
+    }
+  };
+
+  const isActiveRequest = (requestId: number) =>
+    activeRequestRef.current === requestId;
 
   if (status === "complete" && selectedFile) {
     return (
       <Card className="w-full border-border/70 bg-card/90 shadow-elevation-2 backdrop-blur-xl">
         <CardContent className="p-4 sm:p-5">
           <FilePickerInput inputRef={inputRef} onChange={handleFileChange} />
+          {errorMessage ? (
+            <InlineError
+              message={errorMessage}
+              onRetry={() => handleConvert()}
+              className="mb-5"
+            />
+          ) : null}
           <motion.div
             className="grid w-full gap-5 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)_280px]"
             initial={{ opacity: 0, y: 10 }}
@@ -197,11 +312,21 @@ export function UploadCard() {
           >
             <UploadedPdfPanel
               file={selectedFile}
+              statusLabel="Completed"
               onChangePDF={handleChooseFile}
               onRemovePDF={() => handleRemove()}
             />
-            <MarkdownPreview />
-            <ActionsPanel file={selectedFile} onStartOver={resetUpload} />
+            <MarkdownPreview markdown={markdown} />
+            <ActionsPanel
+              copySucceeded={copySucceeded}
+              downloadTarget={downloadTarget}
+              file={selectedFile}
+              markdown={markdown}
+              onCopyMarkdown={handleCopyMarkdown}
+              onDownloadMarkdown={handleDownloadMarkdown}
+              onDownloadPDF={handleDownloadPDF}
+              onStartOver={resetUpload}
+            />
           </motion.div>
         </CardContent>
       </Card>
@@ -214,9 +339,8 @@ export function UploadCard() {
         <CardContent className="p-6 sm:p-8">
           <ProcessingView
             file={selectedFile}
-            progress={((processingStepIndex + 1) / processingSteps.length) * 100}
-            step={processingSteps[processingStepIndex]}
-            stepIndex={processingStepIndex}
+            progress={progress}
+            statusLabel={processingLabel}
           />
         </CardContent>
       </Card>
@@ -239,8 +363,8 @@ export function UploadCard() {
             Turn lecture PDFs into structured study notes
           </h2>
           <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">
-            Add a PDF to preview the complete conversion flow. Everything here
-            stays in the browser until backend integration is connected.
+            Add a PDF to generate markdown study material from the connected
+            backend.
           </p>
         </div>
 
@@ -257,6 +381,7 @@ export function UploadCard() {
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           onRemove={handleRemove}
+          onRetry={selectedFile ? () => handleConvert() : undefined}
         />
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -274,7 +399,7 @@ export function UploadCard() {
               </p>
               <p className="text-sm text-muted-foreground">
                 {isReady
-                  ? "Validated for frontend conversion"
+                  ? "Validated and ready for backend processing"
                   : "PDF only, up to 25 MB"}
               </p>
             </div>
@@ -298,6 +423,7 @@ function DropZone({
   onDragOver,
   onDrop,
   onRemove,
+  onRetry,
 }: {
   errorMessage: string | null;
   isDragging: boolean;
@@ -311,6 +437,7 @@ function DropZone({
   onDragOver: (event: React.DragEvent<HTMLDivElement>) => void;
   onDrop: (event: React.DragEvent<HTMLDivElement>) => void;
   onRemove: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onRetry?: () => void;
 }) {
   const dropZoneClassName = [
     "group cursor-pointer rounded-lg border border-dashed p-6 text-center",
@@ -383,14 +510,7 @@ function DropZone({
       </AnimatePresence>
 
       {errorMessage ? (
-        <motion.div
-          className="mt-5 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-left text-sm text-destructive"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-        >
-          {errorMessage}
-        </motion.div>
+        <InlineError message={errorMessage} onRetry={onRetry} className="mt-5" />
       ) : null}
 
       <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row sm:flex-wrap">
@@ -433,13 +553,11 @@ function DropZone({
 function ProcessingView({
   file,
   progress,
-  step,
-  stepIndex,
+  statusLabel,
 }: {
   file: File;
   progress: number;
-  step: (typeof processingSteps)[number];
-  stepIndex: number;
+  statusLabel: string;
 }) {
   return (
     <motion.div
@@ -454,55 +572,39 @@ function ProcessingView({
       <p className="truncate text-lg font-semibold">{file.name}</p>
       <AnimatePresence mode="wait">
         <motion.p
-          key={step}
+          key={statusLabel}
           className="mt-2 text-sm text-muted-foreground"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.2 }}
         >
-          {step}
+          {statusLabel}
         </motion.p>
       </AnimatePresence>
 
       <div className="mt-7 h-2 overflow-hidden rounded-full bg-surface-sunken">
         <motion.div
           className="h-full rounded-full bg-primary"
-          animate={{ width: `${progress}%` }}
+          animate={{ width: `${Math.round(progress)}%` }}
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
         />
       </div>
-
-      <div className="mt-6 grid gap-2 sm:grid-cols-5">
-        {processingSteps.map((processingStep, index) => (
-          <div
-            key={processingStep}
-            className="flex items-center gap-2 rounded-md border bg-card/70 px-3 py-2 text-left text-xs sm:flex-col sm:text-center"
-          >
-            <span
-              className={[
-                "flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]",
-                index <= stepIndex
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-secondary text-secondary-foreground",
-              ].join(" ")}
-            >
-              {index < stepIndex ? <Check aria-hidden="true" className="size-3" /> : index + 1}
-            </span>
-            <span className="text-muted-foreground">{processingStep}</span>
-          </div>
-        ))}
-      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        {Math.round(progress)}% complete
+      </p>
     </motion.div>
   );
 }
 
 function UploadedPdfPanel({
   file,
+  statusLabel,
   onChangePDF,
   onRemovePDF,
 }: {
   file: File;
+  statusLabel: string;
   onChangePDF: () => void;
   onRemovePDF: () => void;
 }) {
@@ -519,7 +621,7 @@ function UploadedPdfPanel({
         </p>
         <Badge variant="success" className="mt-4">
           <Check aria-hidden="true" className="size-3.5" />
-          Converted
+          {statusLabel}
         </Badge>
 
         <div className="mt-6 grid gap-3">
@@ -537,7 +639,10 @@ function UploadedPdfPanel({
   );
 }
 
-function MarkdownPreview() {
+function MarkdownPreview({ markdown }: { markdown: string }) {
+  const blocks = React.useMemo(() => parseMarkdown(markdown), [markdown]);
+  const title = getMarkdownTitle(markdown);
+
   return (
     <Card className="h-full border-border/70 bg-card/95 shadow-none">
       <CardContent className="p-5 sm:p-7">
@@ -547,112 +652,14 @@ function MarkdownPreview() {
               Markdown Preview
             </p>
             <h2 className="mt-1 text-2xl font-semibold tracking-normal">
-              Cognitive Psychology Lecture Notes
+              {title}
             </h2>
           </div>
           <Badge variant="secondary">Generated</Badge>
         </div>
 
         <article className="space-y-7 text-sm leading-7 text-foreground">
-          <section>
-            <h3 className="text-lg font-semibold">Core Theme</h3>
-            <p className="mt-2 text-muted-foreground">
-              Attention and memory work together. New information becomes useful
-              when it is encoded, connected to prior knowledge, and retrieved
-              repeatedly over time.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="text-lg font-semibold">Key Concepts</h3>
-            <ul className="mt-3 list-disc space-y-2 pl-5 text-muted-foreground">
-              <li>Working memory has limited capacity.</li>
-              <li>Retrieval practice strengthens long-term recall.</li>
-              <li>Spaced review is more effective than cramming.</li>
-              <li>Feedback helps correct inaccurate mental models.</li>
-            </ul>
-          </section>
-
-          <section>
-            <h3 className="text-lg font-semibold">Study Sequence</h3>
-            <ol className="mt-3 list-decimal space-y-2 pl-5 text-muted-foreground">
-              <li>Preview the lecture outline.</li>
-              <li>Convert each section into one question.</li>
-              <li>Answer from memory before checking notes.</li>
-              <li>Revisit missed items after 24 hours.</li>
-            </ol>
-          </section>
-
-          <section>
-            <h3 className="text-lg font-semibold">Strategy Table</h3>
-            <div className="mt-3 rounded-lg border">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead className="bg-surface">
-                  <tr>
-                    <th className="border-b px-4 py-3 font-medium">Concept</th>
-                    <th className="border-b px-4 py-3 font-medium">
-                      Practical Strategy
-                    </th>
-                    <th className="border-b px-4 py-3 font-medium">
-                      Why It Helps
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="text-muted-foreground">
-                  <tr>
-                    <td className="border-b px-4 py-3">Encoding</td>
-                    <td className="border-b px-4 py-3">Create examples</td>
-                    <td className="border-b px-4 py-3">Builds meaning</td>
-                  </tr>
-                  <tr>
-                    <td className="border-b px-4 py-3">Retrieval</td>
-                    <td className="border-b px-4 py-3">Self-test</td>
-                    <td className="border-b px-4 py-3">Strengthens recall</td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3">Spacing</td>
-                    <td className="px-4 py-3">Review later</td>
-                    <td className="px-4 py-3">Reduces forgetting</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section>
-            <h3 className="text-lg font-semibold">Code Example</h3>
-            <pre className="mt-3 rounded-lg bg-surface-sunken p-4 text-xs leading-6 text-foreground whitespace-pre-wrap">
-              <code>{'const reviewPlan = ["preview", "recall", "check", "revise"];'}</code>
-            </pre>
-          </section>
-
-          <blockquote className="rounded-lg border-l-4 border-primary bg-primary/5 p-4 text-muted-foreground">
-            <span className="font-medium text-foreground">Important note:</span>{" "}
-            Recognition feels fluent, but recall proves whether the material is
-            actually usable.
-          </blockquote>
-
-          <section>
-            <h3 className="text-lg font-semibold">Checklist</h3>
-            <div className="mt-3 grid gap-2 text-muted-foreground">
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked readOnly className="size-4" />
-                Identify the lecture objective
-              </label>
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked readOnly className="size-4" />
-                Extract important definitions
-              </label>
-              <label className="flex items-center gap-3">
-                <input type="checkbox" readOnly className="size-4" />
-                Create practice questions
-              </label>
-              <label className="flex items-center gap-3">
-                <input type="checkbox" readOnly className="size-4" />
-                Schedule the next review
-              </label>
-            </div>
-          </section>
+          {blocks.map((block, index) => renderMarkdownBlock(block, index))}
         </article>
       </CardContent>
     </Card>
@@ -660,14 +667,27 @@ function MarkdownPreview() {
 }
 
 function ActionsPanel({
+  copySucceeded,
+  downloadTarget,
   file,
+  markdown,
+  onCopyMarkdown,
+  onDownloadMarkdown,
+  onDownloadPDF,
   onStartOver,
 }: {
+  copySucceeded: boolean;
+  downloadTarget: DownloadTarget | null;
   file: File;
+  markdown: string;
+  onCopyMarkdown: () => void;
+  onDownloadMarkdown: () => void;
+  onDownloadPDF: () => void;
   onStartOver: () => void;
 }) {
-  const wordCount = countWords(placeholderMarkdown);
-  const characterCount = placeholderMarkdown.length;
+  const wordCount = countWords(markdown);
+  const characterCount = markdown.length;
+  const readingTime = Math.max(1, Math.ceil(wordCount / 220));
 
   return (
     <Card className="h-full border-border/70 bg-surface/70 shadow-none lg:col-span-2 xl:col-span-1">
@@ -675,17 +695,42 @@ function ActionsPanel({
         <section>
           <p className="text-sm font-medium text-muted-foreground">Export</p>
           <div className="mt-3 grid gap-3">
-            <Button type="button" variant="outline" className="justify-start">
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start"
+              onClick={onCopyMarkdown}
+            >
               <Clipboard aria-hidden="true" />
               Copy Markdown
             </Button>
-            <Button type="button" variant="outline" className="justify-start">
+            {copySucceeded ? (
+              <Badge variant="success" className="w-fit">
+                <Check aria-hidden="true" className="size-3.5" />
+                Copied
+              </Badge>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start"
+              disabled={downloadTarget !== null}
+              onClick={onDownloadMarkdown}
+            >
               <Download aria-hidden="true" />
-              Download Markdown
+              {downloadTarget === "markdown"
+                ? "Downloading..."
+                : "Download Markdown"}
             </Button>
-            <Button type="button" variant="outline" className="justify-start">
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start"
+              disabled={downloadTarget !== null}
+              onClick={onDownloadPDF}
+            >
               <FileDown aria-hidden="true" />
-              Download PDF
+              {downloadTarget === "pdf" ? "Downloading..." : "Download PDF"}
             </Button>
           </div>
         </section>
@@ -695,7 +740,10 @@ function ActionsPanel({
           <dl className="mt-3 grid gap-3 text-sm">
             <Metric label="Last conversion" value="Just now" />
             <Metric label="Current status" value="Ready to export" />
-            <Metric label="Estimated reading time" value="4 min" />
+            <Metric
+              label="Estimated reading time"
+              value={`${readingTime} min`}
+            />
             <Metric label="Word count" value={wordCount.toLocaleString()} />
             <Metric
               label="Character count"
@@ -711,6 +759,39 @@ function ActionsPanel({
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+function InlineError({
+  className,
+  message,
+  onRetry,
+}: {
+  className?: string;
+  message: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <motion.div
+      className={[
+        "rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-left text-sm text-destructive",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <span>{message}</span>
+        {onRetry ? (
+          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        ) : null}
+      </div>
+    </motion.div>
   );
 }
 
@@ -741,6 +822,297 @@ function FilePickerInput({
   );
 }
 
+type MarkdownBlock =
+  | { type: "heading"; level: number; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; ordered: boolean; items: MarkdownListItem[] }
+  | { type: "code"; language?: string; code: string }
+  | { type: "quote"; text: string }
+  | { type: "table"; headers: string[]; rows: string[][] };
+
+type MarkdownListItem = {
+  text: string;
+  checked?: boolean;
+};
+
+function parseMarkdown(markdown: string) {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = line.match(/^```(\w+)?/);
+
+    if (fence) {
+      const codeLines: string[] = [];
+      index += 1;
+
+      while (index < lines.length && !lines[index].startsWith("```")) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+
+      if (index < lines.length) {
+        index += 1;
+      }
+
+      blocks.push({
+        type: "code",
+        language: fence[1],
+        code: codeLines.join("\n"),
+      });
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)/);
+
+    if (heading) {
+      blocks.push({
+        type: "heading",
+        level: heading[1].length,
+        text: heading[2],
+      });
+      index += 1;
+      continue;
+    }
+
+    if (isTableStart(lines, index)) {
+      const headers = parseTableRow(lines[index]);
+      const rows: string[][] = [];
+      index += 2;
+
+      while (index < lines.length && lines[index].includes("|")) {
+        rows.push(parseTableRow(lines[index]));
+        index += 1;
+      }
+
+      blocks.push({ type: "table", headers, rows });
+      continue;
+    }
+
+    if (line.trim().startsWith(">")) {
+      const quoteLines: string[] = [];
+
+      while (index < lines.length && lines[index].trim().startsWith(">")) {
+        quoteLines.push(lines[index].replace(/^>\s?/, ""));
+        index += 1;
+      }
+
+      blocks.push({ type: "quote", text: quoteLines.join(" ") });
+      continue;
+    }
+
+    const orderedListMatch = line.match(/^\d+\.\s+(.+)/);
+    const unorderedListMatch = line.match(/^[-*]\s+(.+)/);
+
+    if (orderedListMatch || unorderedListMatch) {
+      const ordered = Boolean(orderedListMatch);
+      const items: MarkdownListItem[] = [];
+
+      while (index < lines.length) {
+        const currentLine = lines[index];
+        const match = ordered
+          ? currentLine.match(/^\d+\.\s+(.+)/)
+          : currentLine.match(/^[-*]\s+(.+)/);
+
+        if (!match) {
+          break;
+        }
+
+        const checkbox = match[1].match(/^\[(x|X| )\]\s+(.+)/);
+        items.push(
+          checkbox
+            ? {
+                text: checkbox[2],
+                checked: checkbox[1].toLowerCase() === "x",
+              }
+            : { text: match[1] },
+        );
+        index += 1;
+      }
+
+      blocks.push({ type: "list", ordered, items });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+
+    while (index < lines.length && lines[index].trim()) {
+      if (paragraphLines.length > 0 && isSpecialMarkdownLine(lines[index])) {
+        break;
+      }
+
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+
+    blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
+  }
+
+  return blocks;
+}
+
+function renderMarkdownBlock(block: MarkdownBlock, index: number) {
+  switch (block.type) {
+    case "heading":
+      if (block.level === 1) {
+        return (
+          <h1 key={index} className="text-3xl font-semibold tracking-normal">
+            {block.text}
+          </h1>
+        );
+      }
+
+      if (block.level === 2) {
+        return (
+          <h2 key={index} className="text-xl font-semibold tracking-normal">
+            {block.text}
+          </h2>
+        );
+      }
+
+      return (
+        <h3 key={index} className="text-lg font-semibold tracking-normal">
+          {block.text}
+        </h3>
+      );
+    case "paragraph":
+      return (
+        <p key={index} className="text-muted-foreground">
+          {block.text}
+        </p>
+      );
+    case "list":
+      if (block.items.some((item) => typeof item.checked === "boolean")) {
+        return (
+          <div key={index} className="grid gap-2 text-muted-foreground">
+            {block.items.map((item, itemIndex) => (
+              <label key={itemIndex} className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={Boolean(item.checked)}
+                  readOnly
+                  className="size-4"
+                />
+                {item.text}
+              </label>
+            ))}
+          </div>
+        );
+      }
+
+      if (block.ordered) {
+        return (
+          <ol
+            key={index}
+            className="list-decimal space-y-2 pl-5 text-muted-foreground"
+          >
+            {block.items.map((item, itemIndex) => (
+              <li key={itemIndex}>{item.text}</li>
+            ))}
+          </ol>
+        );
+      }
+
+      return (
+        <ul key={index} className="list-disc space-y-2 pl-5 text-muted-foreground">
+          {block.items.map((item, itemIndex) => (
+            <li key={itemIndex}>{item.text}</li>
+          ))}
+        </ul>
+      );
+    case "table":
+      return (
+        <div key={index} className="overflow-x-auto rounded-lg border">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead className="bg-surface">
+              <tr>
+                {block.headers.map((header) => (
+                  <th key={header} className="border-b px-4 py-3 font-medium">
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="text-muted-foreground">
+              {block.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex} className="border-b px-4 py-3">
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "code":
+      return (
+        <pre
+          key={index}
+          className="rounded-lg bg-surface-sunken p-4 text-xs leading-6 text-foreground whitespace-pre-wrap"
+        >
+          <code>{block.code}</code>
+        </pre>
+      );
+    case "quote":
+      return (
+        <blockquote
+          key={index}
+          className="rounded-lg border-l-4 border-primary bg-primary/5 p-4 text-muted-foreground"
+        >
+          {block.text}
+        </blockquote>
+      );
+  }
+}
+
+function isTableStart(lines: string[], index: number) {
+  return (
+    lines[index]?.includes("|") &&
+    Boolean(lines[index + 1]?.match(/^\s*\|?[\s:-]+\|[\s|:-]*$/))
+  );
+}
+
+function parseTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isSpecialMarkdownLine(line: string) {
+  return (
+    /^```/.test(line) ||
+    /^(#{1,3})\s+/.test(line) ||
+    /^\d+\.\s+/.test(line) ||
+    /^[-*]\s+/.test(line) ||
+    line.trim().startsWith(">") ||
+    line.includes("|")
+  );
+}
+
+function getMarkdownTitle(markdown: string) {
+  return (
+    markdown
+      .split("\n")
+      .find((line) => line.startsWith("# "))
+      ?.replace(/^#\s+/, "")
+      .trim() || "Generated study notes"
+  );
+}
+
 function formatFileSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
@@ -751,6 +1123,87 @@ function countWords(markdown: string) {
     .trim()
     .split(/\s+/)
     .filter(Boolean).length;
+}
+
+function getStatusLabel(status: JobStatus) {
+  switch (status.status) {
+    case "queued":
+      return "Uploading";
+    case "uploading":
+      return "Uploading";
+    case "extracting":
+      return "Extracting text";
+    case "generating":
+      return "Generating Markdown";
+    case "formatting":
+      return "Finalizing";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "processing":
+      return formatBackendStatus(status.rawStatus);
+  }
+}
+
+function estimateProgress(status: JobStatus, attempt: number) {
+  if (typeof status.progress === "number") {
+    return status.progress;
+  }
+
+  switch (status.status) {
+    case "queued":
+      return 15;
+    case "uploading":
+      return 24;
+    case "extracting":
+      return 44;
+    case "generating":
+      return 66;
+    case "formatting":
+      return 84;
+    case "completed":
+      return 100;
+    case "failed":
+      return 100;
+    case "processing":
+      return Math.min(90, 20 + attempt * 6);
+  }
+}
+
+function formatBackendStatus(status: string) {
+  return status
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function waitForPollInterval() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 1000);
+  });
+}
+
+function saveBlob(blob: Blob, fileName: string) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function getFileStem(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "") || "notes";
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Something went wrong. Please retry.";
 }
 
 function isPdfFile(file: File) {
