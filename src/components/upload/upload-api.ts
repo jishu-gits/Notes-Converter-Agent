@@ -98,7 +98,7 @@ export async function getGeneratedMarkdown(
 }
 
 export async function downloadMarkdown(jobId: string): Promise<Blob> {
-  return requestBlob(`/jobs/${encodeURIComponent(jobId)}/download/markdown`, {
+  return requestBlob(`/jobs/${encodeURIComponent(jobId)}/download/md`, {
     headers: {
       Accept: "text/markdown, application/octet-stream",
     },
@@ -110,6 +110,12 @@ export async function downloadPDF(jobId: string): Promise<Blob> {
     headers: {
       Accept: "application/pdf, application/octet-stream",
     },
+  });
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  await request(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
   });
 }
 

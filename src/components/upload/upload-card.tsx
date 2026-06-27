@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
+  deleteJob,
   downloadMarkdown,
   downloadPDF,
   getGeneratedMarkdown,
@@ -222,6 +223,11 @@ export function UploadCard() {
 
   const resetUpload = () => {
     activeRequestRef.current += 1;
+
+    if (jobId) {
+      void deleteJob(jobId).catch(() => undefined);
+    }
+
     setSelectedFile(null);
     setJobId(null);
     setMarkdown("");

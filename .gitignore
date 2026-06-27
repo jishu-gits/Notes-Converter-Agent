@@ -1,31 +1,74 @@
-# Dependencies
-node_modules/
-.pnp/
-.pnp.js
+# =========================
 
-# Next.js
+# Node / Next.js
+
+# =========================
+
+node_modules/
 .next/
 out/
-
-# Production
 dist/
 build/
 
-# Environment
-.env
-.env*.local
-
 # Logs
+
 npm-debug.log*
+pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
+*.log
 
-# OS and editors
+# Environment
+
+.env
+.env.*
+!.env.example
+
+# Python
+
+backend/.venv/
+backend/**pycache**/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.pyd
+backend/.pytest_cache/
+backend/.mypy_cache/
+
+# Uploads / Generated Files
+
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+backend/outputs/*
+!backend/outputs/.gitkeep
+
+# OS
+
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDE
+
+.vscode/settings.json
 .idea/
-.vscode/
+
+# Python cache
+
+**/**pycache**/
+*.py[cod]
+
+# Coverage
+
+.coverage
+coverage.xml
+htmlcov/
+
+# Temporary
+
+*.tmp
+*.temp
 
 # TypeScript
+
 *.tsbuildinfo
