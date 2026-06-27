@@ -1,85 +1,77 @@
 import { AppShell } from "@/shared/layouts/app-shell";
-import { PageSection } from "@/shared/layouts/page-section";
-import { Badge } from "@/shared/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/shared/ui/card";
-import { siteConfig } from "@/config/site";
-import { CheckCircle2, Layers3, Palette, ShieldCheck } from "lucide-react";
-
-const foundationAreas = [
-  {
-    title: "Architecture",
-    description:
-      "Feature folders, shared primitives, services, and config are separated by responsibility.",
-    icon: Layers3,
-  },
-  {
-    title: "Design System",
-    description:
-      "Semantic tokens define color, spacing, radius, elevation, and motion for light and dark mode.",
-    icon: Palette,
-  },
-  {
-    title: "Standards",
-    description:
-      "TypeScript, ESLint, Prettier, environment templates, and documentation are ready for Phase 1.",
-    icon: ShieldCheck,
-  },
-];
+import { Card, CardContent } from "@/shared/ui/card";
+import { BookMarked, GraduationCap, NotebookPen, Sparkles } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 export default function HomePage() {
   return (
     <AppShell>
-      <PageSection
-        eyebrow="Phase 0"
-        title={siteConfig.name}
-        description="The project foundation is ready for feature work after review. This screen intentionally avoids upload, AI, conversion, authentication, and backend behavior."
-      >
-        <div className="grid gap-4 md:grid-cols-3">
-          {foundationAreas.map((area) => {
-            const Icon = area.icon;
+      <section className="grid flex-1 place-items-center py-8">
+        <Card className="w-full max-w-4xl overflow-hidden border-border/70 bg-card/86 shadow-elevation-3 backdrop-blur-xl">
+          <CardContent className="p-0">
+            <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="flex flex-col justify-center p-8 sm:p-10 lg:p-12">
+                <div className="bg-accent text-accent-foreground mb-6 flex size-12 items-center justify-center rounded-lg shadow-elevation-1">
+                  <Sparkles aria-hidden="true" className="size-5" />
+                </div>
+                <p className="text-muted-foreground mb-3 text-sm font-medium uppercase tracking-normal">
+                  AI Notes Converter
+                </p>
+                <h1 className="max-w-2xl text-3xl font-semibold leading-tight tracking-normal text-foreground sm:text-4xl">
+                  Convert your notes into beautiful study material
+                </h1>
+                <p className="text-muted-foreground mt-4 max-w-xl text-base leading-7">
+                  Your workspace is ready. Upload functionality will arrive in
+                  the next phase, followed by AI-powered conversion tools for
+                  structured study guides.
+                </p>
+              </div>
 
-            return (
-              <Card key={area.title}>
-                <CardHeader>
-                  <div className="bg-accent text-accent-foreground mb-3 flex size-10 items-center justify-center rounded-md">
-                    <Icon aria-hidden="true" className="size-5" />
-                  </div>
-                  <CardTitle>{area.title}</CardTitle>
-                  <CardDescription>{area.description}</CardDescription>
-                </CardHeader>
-              </Card>
-            );
-          })}
-        </div>
-
-        <Card className="mt-6">
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>Foundation Status</CardTitle>
-              <CardDescription>
-                The repository contains only architectural scaffolding and
-                documentation for this phase.
-              </CardDescription>
+              <div className="border-border/70 bg-surface/70 grid min-h-72 border-t p-6 sm:p-8 lg:border-l lg:border-t-0">
+                <div className="grid gap-4">
+                  <PreviewCard
+                    icon={NotebookPen}
+                    title="Lecture notes"
+                    description="Source material"
+                  />
+                  <PreviewCard
+                    icon={BookMarked}
+                    title="Study guide"
+                    description="Coming next"
+                  />
+                  <PreviewCard
+                    icon={GraduationCap}
+                    title="Exam prep"
+                    description="Future workflow"
+                  />
+                </div>
+              </div>
             </div>
-            <Badge variant="success">
-              <CheckCircle2 aria-hidden="true" className="size-3.5" />
-              Ready for review
-            </Badge>
-          </CardHeader>
-          <CardContent className="text-muted-foreground grid gap-3 text-sm sm:grid-cols-2">
-            <span>Next.js App Router</span>
-            <span>Tokenized Tailwind CSS</span>
-            <span>shadcn-style primitives</span>
-            <span>Documented state strategy</span>
           </CardContent>
         </Card>
-      </PageSection>
+      </section>
     </AppShell>
+  );
+}
+
+function PreviewCard({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex items-center gap-4 rounded-lg border bg-card/90 p-4 shadow-elevation-1">
+      <div className="bg-secondary text-secondary-foreground flex size-10 shrink-0 items-center justify-center rounded-md">
+        <Icon aria-hidden="true" className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{title}</p>
+        <p className="text-muted-foreground text-sm">{description}</p>
+      </div>
+    </div>
   );
 }
