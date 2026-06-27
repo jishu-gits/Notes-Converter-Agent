@@ -1,7 +1,7 @@
+import { UploadCard } from "@/components/upload/upload-card";
 import { AppShell } from "@/shared/layouts/app-shell";
 import { Card, CardContent } from "@/shared/ui/card";
-import { BookMarked, GraduationCap, NotebookPen, Sparkles } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 export default function HomePage() {
   return (
@@ -27,51 +27,13 @@ export default function HomePage() {
                 </p>
               </div>
 
-              <div className="border-border/70 bg-surface/70 grid min-h-72 border-t p-6 sm:p-8 lg:border-l lg:border-t-0">
-                <div className="grid gap-4">
-                  <PreviewCard
-                    icon={NotebookPen}
-                    title="Lecture notes"
-                    description="Source material"
-                  />
-                  <PreviewCard
-                    icon={BookMarked}
-                    title="Study guide"
-                    description="Coming next"
-                  />
-                  <PreviewCard
-                    icon={GraduationCap}
-                    title="Exam prep"
-                    description="Future workflow"
-                  />
-                </div>
+              <div className="border-border/70 bg-surface/70 grid min-h-72 place-items-center border-t p-6 sm:p-8 lg:border-l lg:border-t-0">
+                <UploadCard />
               </div>
             </div>
           </CardContent>
         </Card>
       </section>
     </AppShell>
-  );
-}
-
-function PreviewCard({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex items-center gap-4 rounded-lg border bg-card/90 p-4 shadow-elevation-1">
-      <div className="bg-secondary text-secondary-foreground flex size-10 shrink-0 items-center justify-center rounded-md">
-        <Icon aria-hidden="true" className="size-4" />
-      </div>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{title}</p>
-        <p className="text-muted-foreground text-sm">{description}</p>
-      </div>
-    </div>
   );
 }
