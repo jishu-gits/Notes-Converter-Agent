@@ -2,67 +2,59 @@
 
 ## Overview
 
-The application uses a feature-based Next.js App Router structure. Shared primitives and infrastructure are kept outside feature folders so future product phases can add capabilities without reshaping the repository.
+The Remarker AI application uses a split-stack architecture: a feature-based Next.js App Router frontend, and a FastAPI Python backend. This separation of concerns allows for robust and scalable AI model integration on the backend, while providing a snappy, highly-interactive UI on the frontend.
 
-## Application Structure
+## Frontend Structure
+
+The frontend uses a Next.js App Router structure.
 
 ```text
 src/app
 ```
-
-Owns route segments, layouts, metadata, and top-level providers. Route files should compose feature components and shared layouts, not contain business logic.
+Owns route segments, layouts, metadata, and top-level providers. Route files compose feature components and shared layouts.
 
 ```text
-src/features
+src/components
 ```
-
-Owns product capabilities by domain:
-
-- `upload` for future file selection and upload workflow UI.
-- `converter` for future conversion workspace UI.
-- `notes` for future notes viewing and editing UI.
-- `export` for future export controls and result UI.
-- `settings` for future preferences and configuration UI.
+Owns product capabilities by domain, specifically the upload and converter features (`upload-card.tsx`).
 
 ```text
 src/shared
 ```
-
 Owns reusable building blocks:
-
 - `ui` for primitive shadcn-style components.
-- `layouts` for reusable layout shells.
-- `icons` for icon re-exports.
-- `animations` for motion constants.
+- `layouts` for reusable layout shells (e.g. `app-shell.tsx`).
 
-Other top-level folders separate cross-cutting concerns: `hooks`, `services`, `lib`, `styles`, `types`, `constants`, `utils`, and `config`.
+```text
+src/services
+```
+The boundary for shared clients, such as the `upload-api.ts` which handles all communication with the backend.
 
-## Component Levels
+### State Management
+- **Local State**: Ephemeral UI state such as modal visibility, hover state, and form field UI.
+- **Server State**: React Query (TanStack) and native Next.js fetch cache.
+- **Provider State**: A custom React context manages the selected AI provider, validating its health against the backend.
 
-Primitive components live in `src/shared/ui`. Examples: `Button`, `Card`, `Input`, `Badge`, `Dialog`, and `Tooltip`.
+## Backend Structure
 
-Composite components should combine primitives for reusable patterns and live near their owning feature unless they are truly cross-feature.
+The backend is built with FastAPI and runs on Python 3.10+.
 
-Feature components should live inside `src/features/<feature>` and represent user-facing sections such as future upload, converter, notes, export, or settings panels.
+```text
+backend/app
+```
+The core application folder containing:
+- `api/routes.py`: Defines the REST API endpoints.
+- `core/config.py`: Centralized environment and application configuration.
+- `models/schemas.py`: Pydantic models for request/response validation.
+- `services/`: Business logic.
+  - `ai_providers.py`: The abstraction layer supporting multiple AI providers (Gemini, NVIDIA NIM).
+  - `job_manager.py`: Manages async conversion jobs and tracks their status.
 
-## State Management
-
-Local state should be the default for ephemeral UI state such as modal visibility, hover state, tabs, and form field UI.
-
-Global client state should use Zustand only when multiple distant areas need the same client-side value. Examples for later phases include current file metadata, conversion status, theme, and user preferences.
-
-Server state should use TanStack Query for API responses, conversion history, conversion results, and remote cache invalidation.
-
-Forms should use React Hook Form with Zod schemas when validation or submission state is non-trivial.
-
-## Services
-
-`src/services` is the boundary for shared clients and external integrations. Phase 0 includes only query-client setup. Future AI clients, API clients, storage adapters, and telemetry wrappers should be introduced here or inside a feature service folder when ownership is narrow.
+### AI Provider Abstraction
+The system supports multiple AI providers through the `AIProvider` protocol. The `AIProviderService` resolves requests, attempts generation using the primary provider, and gracefully falls back to secondary providers if errors occur.
 
 ## Scalability Strategy
 
-- Keep feature code inside feature folders until it is reused by multiple features.
-- Promote reusable UI to `src/shared/ui` only when it is generic and token-driven.
-- Keep route files thin and composition-oriented.
-- Prefer semantic design tokens over raw colors and one-off CSS.
-- Add global state only when local or server state cannot model the need cleanly.
+- Keep feature code cohesive in specific folders.
+- Maintain the strict frontend/backend split via REST APIs.
+- The AI Provider abstraction makes it easy to drop in new providers (like OpenAI or Anthropic) in the future simply by creating a new class that implements the `AIProvider` protocol.

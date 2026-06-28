@@ -61,6 +61,7 @@ export function UploadCard() {
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
   const [jobId, setJobId] = React.useState<string | null>(null);
   const [markdown, setMarkdown] = React.useState("");
+  const [finalJobStatus, setFinalJobStatus] = React.useState<JobStatus | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [isDragging, setIsDragging] = React.useState(false);
   const [status, setStatus] = React.useState<UploadStatus>("idle");
@@ -132,6 +133,7 @@ export function UploadCard() {
     setSelectedFile(file);
     setJobId(null);
     setMarkdown("");
+    setFinalJobStatus(null);
     setCopySucceeded(false);
     setErrorMessage(null);
     setStatus("ready");
@@ -191,6 +193,7 @@ export function UploadCard() {
     setCopySucceeded(false);
     setJobId(null);
     setMarkdown("");
+    setFinalJobStatus(null);
     setProgress(8);
     setProcessingLabel("Uploading");
     setStatus("processing");
@@ -272,6 +275,7 @@ export function UploadCard() {
         }
 
         setMarkdown(generatedMarkdown);
+        setFinalJobStatus(nextStatus);
         setProcessingLabel("Completed");
         setProgress(100);
         setStatus("complete");
@@ -301,6 +305,7 @@ export function UploadCard() {
     setSelectedFile(null);
     setJobId(null);
     setMarkdown("");
+    setFinalJobStatus(null);
     setCopySucceeded(false);
     setErrorMessage(null);
     setIsDragging(false);
@@ -400,13 +405,14 @@ export function UploadCard() {
             ) : null}
             <motion.div
               className="grid w-full gap-5 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)_280px]"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.3, type: "spring", bounce: 0.4 }}
             >
               <UploadedPdfPanel
                 file={selectedFile}
-                providerLabel={selectedProviderDetail?.label}
+                providerLabel={finalJobStatus?.providerLabel || selectedProviderDetail?.label}
+                fallbackProvider={finalJobStatus?.fallbackProvider}
                 statusLabel="Completed"
                 onChangePDF={handleChooseFile}
                 onRemovePDF={() => handleRemove()}
@@ -555,7 +561,15 @@ function DropZone({
   return (
     <div
       className={dropZoneClassName}
+      role="button"
+      tabIndex={0}
       onClick={onChooseFile}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onChooseFile();
+        }
+      }}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -685,10 +699,16 @@ function ProcessingView({
 
       <div className="mt-7 h-2 overflow-hidden rounded-full bg-surface-sunken">
         <motion.div
-          className="h-full rounded-full bg-primary"
+          className="relative h-full rounded-full bg-primary overflow-hidden"
           animate={{ width: `${Math.round(progress)}%` }}
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-        />
+        >
+          <motion.div
+            className="absolute inset-0 bg-white/20"
+            animate={{ x: ["-100%", "100%"] }}
+            transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+          />
+        </motion.div>
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
         {Math.round(progress)}% complete
@@ -699,11 +719,15 @@ function ProcessingView({
 
 function UploadedPdfPanel({
   file,
+  providerLabel,
+  fallbackProvider,
   statusLabel,
   onChangePDF,
   onRemovePDF,
 }: {
   file: File;
+  providerLabel?: string;
+  fallbackProvider?: string;
   statusLabel: string;
   onChangePDF: () => void;
   onRemovePDF: () => void;
@@ -719,10 +743,27 @@ function UploadedPdfPanel({
         <p className="mt-1 text-sm text-muted-foreground">
           {formatFileSize(file.size)}
         </p>
-        <Badge variant="success" className="mt-4">
-          <Check aria-hidden="true" className="size-3.5" />
-          {statusLabel}
-        </Badge>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Badge variant="success">
+            <Check aria-hidden="true" className="size-3.5" />
+            {statusLabel}
+          </Badge>
+          {providerLabel ? (
+            <Badge variant="secondary">
+              <Sparkles aria-hidden="true" className="size-3.5" />
+              {providerLabel}
+            </Badge>
+          ) : null}
+        </div>
+        
+        {fallbackProvider ? (
+          <div className="mt-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <p>Primary provider failed. Used fallback provider.</p>
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-6 grid gap-3">
           <Button type="button" variant="outline" onClick={onChangePDF}>

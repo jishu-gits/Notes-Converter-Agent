@@ -372,10 +372,11 @@ function ProviderSettingsPanel() {
                 isSelected
                   ? "border-primary bg-primary/10 shadow-elevation-1"
                   : "border-border/70 bg-card/70 hover:-translate-y-0.5 hover:border-primary/50",
-                !provider.configured && "opacity-70",
+                !provider.configured && "opacity-50 cursor-not-allowed hover:translate-y-0 hover:border-border/70",
               )}
               role="radio"
               type="button"
+              disabled={!provider.configured}
               onClick={() => setSelectedProvider(provider.id)}
             >
               <span className="flex items-center justify-between gap-2">

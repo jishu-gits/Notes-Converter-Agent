@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - CORS_ORIGIN=http://localhost:3000
+      - AI_PROVIDER=auto
+      - AI_FALLBACK_ENABLED=true
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY}
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/outputs:/app/outputs
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend

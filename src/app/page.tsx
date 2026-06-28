@@ -1,5 +1,11 @@
 import Image from "next/image";
-import { UploadCard } from "@/components/upload/upload-card";
+import dynamic from "next/dynamic";
+const UploadCard = dynamic(
+  () => import("@/components/upload/upload-card").then((mod) => mod.UploadCard),
+  {
+    loading: () => <div className="h-[400px] w-full animate-pulse rounded-lg bg-surface/50" />,
+  }
+);
 import { AppShell } from "@/shared/layouts/app-shell";
 import { Badge } from "@/shared/ui/badge";
 

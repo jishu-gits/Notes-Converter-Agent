@@ -1,66 +1,96 @@
-# AI Notes Converter
+# Remarker AI
 
-AI Notes Converter is a Next.js application foundation for turning source material into structured notes in later phases. Phase 0 establishes repository structure, design tokens, shared UI primitives, tooling, and documentation only.
+Remarker AI is a powerful application for converting dense PDF academic source material into clean, structured Markdown study notes. It provides consistent formatting across multiple AI providers including Google Gemini and NVIDIA NIM.
 
-No AI behavior, upload flow, backend API, authentication, file conversion, or business logic is implemented in this phase.
+![Hero Illustration](/illustrations/ai-generated-document.svg)
+
+## Features
+
+- **Provider-Flexible**: Seamlessly switch between Google Gemini and NVIDIA NIM.
+- **Automatic Fallback**: Automatically falls back to secondary providers if the primary provider fails or rate-limits.
+- **Progress Tracking**: Real-time progress indicators across 5 stages (Uploading, Parsing, Extracting, Running AI, Formatting).
+- **Markdown Preview & Export**: Live preview of generated notes and instant download in Markdown or PDF formats.
+- **Responsive & Accessible**: Fully responsive layout with keyboard accessibility and ARIA support.
+
+## Architecture
+
+```mermaid
+graph TD
+    Client[Next.js Client] -->|Upload PDF & Polling| API[FastAPI Backend]
+    API -->|Validation & Queueing| JobManager[Job Manager]
+    JobManager --> AIProviderService[AI Provider Service]
+    AIProviderService -->|Primary| Gemini[Google Gemini API]
+    AIProviderService -->|Fallback| NvidiaNim[NVIDIA NIM API]
+    Gemini -->|Markdown| JobManager
+    NvidiaNim -->|Markdown| JobManager
+    JobManager -->|Status & Results| API
+    API -->|Download/View| Client
+```
 
 ## Tech Stack
 
-- Next.js App Router
-- React
-- TypeScript
-- Tailwind CSS
-- shadcn/ui conventions
-- Motion
-- Zustand
-- TanStack Query
-- React Hook Form
-- Zod
-- Sonner
-- Lucide Icons
+**Frontend**: Next.js App Router, React, TypeScript, Tailwind CSS, shadcn/ui conventions, Motion, Zustand, TanStack Query, React Hook Form, Zod.
+**Backend**: FastAPI, Python 3.10+, PyPDF, Google GenAI SDK, HTTPX (for NVIDIA NIM).
 
 ## Installation
 
-```bash
-pnpm install
-```
+### Prerequisites
+- Node.js 18+ and `pnpm`
+- Python 3.10+
+- AI Provider API Keys (Gemini and/or NVIDIA NIM)
+
+### Setup
+
+1. **Clone and Install Frontend Dependencies**
+   ```bash
+   pnpm install
+   ```
+2. **Install Backend Dependencies**
+   ```bash
+   cd backend
+   pip install -r requirements.txt
+   ```
+3. **Environment Configuration**
+   Copy `.env.example` to `.env` and configure your API keys and base URLs.
 
 ## Development
 
+### Start Backend
+```bash
+cd backend
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+### Start Frontend
 ```bash
 pnpm dev
 ```
+The application will be available at `http://localhost:3000`.
 
-The local app runs at `http://localhost:3000` by default.
+## Deployment
 
-## Scripts
-
-- `pnpm dev` starts the development server.
-- `pnpm build` creates a production build.
-- `pnpm start` serves the production build.
-- `pnpm lint` runs ESLint.
-- `pnpm typecheck` runs TypeScript without emitting files.
-- `pnpm format` formats the repository.
-- `pnpm format:check` checks formatting.
-- `pnpm validate` runs lint, typecheck, and format checks.
+Remarker AI is production-ready. See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions on deploying the frontend to Vercel and the backend to Render using Docker.
 
 ## Folder Structure
 
 ```text
 src/
   app/          Next.js routes, layouts, and app providers.
-  features/     Feature-owned UI and logic by product domain.
+  components/   Feature components like upload-card.
   shared/       Reusable UI, layouts, icons, and animation tokens.
-  hooks/        Cross-feature React hooks.
   services/     Integration boundaries and shared clients.
-  lib/          Framework-adjacent helpers.
-  styles/       Global CSS and design tokens.
-  types/        Cross-feature TypeScript types.
-  constants/    Stable shared constants.
-  utils/        Pure reusable utilities.
   config/       Application configuration.
+
+backend/
+  app/
+    api/        FastAPI route definitions.
+    core/       Configuration and settings.
+    models/     Pydantic schemas.
+    services/   Job manager and AI provider integrations.
+    utils/      File handling and helper functions.
 ```
 
-## Phase Status
-
-Phase 0 is ready for review when `pnpm validate` passes. Phase 1 should begin only after the foundation, architecture, and design system are approved.
+## Roadmap
+- [ ] Add user accounts and history persistence.
+- [ ] Support custom local AI models via Ollama.
+- [ ] Add direct PDF viewer alongside markdown.
