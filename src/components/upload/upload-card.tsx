@@ -418,9 +418,7 @@ export function UploadCard() {
                 onRemovePDF={() => handleRemove()}
               />
               <MarkdownPreview
-                copySucceeded={copySucceeded}
                 markdown={markdown}
-                onCopyMarkdown={handleCopyMarkdown}
               />
               <ActionsPanel
                 copySucceeded={copySucceeded}
