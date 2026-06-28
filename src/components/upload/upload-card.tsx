@@ -1,21 +1,31 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
+import { toast } from "sonner";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent } from "@/shared/ui/card";
 import {
+  AlertTriangle,
   Check,
+  CheckCircle2,
   Clipboard,
+  Code2,
+  CopyCheck,
   Download,
   FileDown,
   FileText,
+  Loader2,
   RotateCcw,
   Sparkles,
   Trash2,
   UploadCloud,
+  Wand2,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { cn } from "@/lib/utils";
+import { useProviderConfig } from "@/services/provider-config";
 import {
   deleteJob,
   downloadMarkdown,
@@ -28,6 +38,14 @@ import {
 
 const maxFileSize = 25 * 1024 * 1024;
 const maxPollAttempts = 120;
+const processingStages = [
+  { label: "Uploading", progress: 12 },
+  { label: "Parsing document", progress: 24 },
+  { label: "Extracting text", progress: 38 },
+  { label: "Running AI", progress: 62 },
+  { label: "Formatting notes", progress: 84 },
+  { label: "Finalizing", progress: 94 },
+];
 
 type UploadStatus = "idle" | "ready" | "processing" | "complete";
 type DownloadTarget = "markdown" | "pdf";
@@ -36,6 +54,10 @@ export function UploadCard() {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const activeRequestRef = React.useRef(0);
   const copyFeedbackTimerRef = React.useRef<number | null>(null);
+  const toastIdRef = React.useRef<string | number | null>(null);
+  const resultRef = React.useRef<HTMLDivElement>(null);
+  const { selectedProvider, selectedProviderDetail, isLoading, error } =
+    useProviderConfig();
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
   const [jobId, setJobId] = React.useState<string | null>(null);
   const [markdown, setMarkdown] = React.useState("");
@@ -55,8 +77,18 @@ export function UploadCard() {
       if (copyFeedbackTimerRef.current) {
         window.clearTimeout(copyFeedbackTimerRef.current);
       }
+
+      if (toastIdRef.current) {
+        toast.dismiss(toastIdRef.current);
+      }
     };
   }, []);
+
+  React.useEffect(() => {
+    if (status === "complete") {
+      resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [status]);
 
   const handleChooseFile = () => {
     if (status !== "processing") {
@@ -80,6 +112,9 @@ export function UploadCard() {
       setSelectedFile(null);
       setStatus("idle");
       setErrorMessage("Please choose a PDF file.");
+      toast.warning("Choose a PDF file", {
+        description: "Remarker AI currently accepts PDF uploads only.",
+      });
       return;
     }
 
@@ -87,6 +122,9 @@ export function UploadCard() {
       setSelectedFile(null);
       setStatus("idle");
       setErrorMessage("PDF must be 25 MB or smaller.");
+      toast.error("PDF is too large", {
+        description: "Files must be 25 MB or smaller.",
+      });
       return;
     }
 
@@ -99,6 +137,9 @@ export function UploadCard() {
     setStatus("ready");
     setProgress(0);
     setProcessingLabel("Uploading");
+    toast.success("PDF ready to convert", {
+      description: file.name,
+    });
   };
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -153,9 +194,20 @@ export function UploadCard() {
     setProgress(8);
     setProcessingLabel("Uploading");
     setStatus("processing");
+    toastIdRef.current = toast.loading("Uploading PDF", {
+      description: selectedProviderDetail
+        ? `Using ${selectedProviderDetail.label}`
+        : "Preparing provider",
+    });
+
+    if (selectedProviderDetail && !selectedProviderDetail.configured) {
+      toast.warning("Selected provider is not configured", {
+        description: "The backend will use fallback if another provider is ready.",
+      });
+    }
 
     try {
-      const upload = await uploadPDF(file);
+      const upload = await uploadPDF(file, selectedProvider ?? undefined);
 
       if (!isActiveRequest(requestId)) {
         return;
@@ -163,6 +215,10 @@ export function UploadCard() {
 
       setJobId(upload.jobId);
       setProgress(15);
+      toast.loading("Processing document", {
+        id: toastIdRef.current ?? undefined,
+        description: "Parsing document and running AI",
+      });
       await pollJob(upload.jobId, requestId);
     } catch (error) {
       if (!isActiveRequest(requestId)) {
@@ -171,7 +227,12 @@ export function UploadCard() {
 
       setStatus("ready");
       setProgress(0);
-      setErrorMessage(getErrorMessage(error));
+      const nextErrorMessage = getErrorMessage(error);
+      setErrorMessage(nextErrorMessage);
+      toast.error("Conversion failed", {
+        id: toastIdRef.current ?? undefined,
+        description: nextErrorMessage,
+      });
     }
   };
 
@@ -214,6 +275,10 @@ export function UploadCard() {
         setProcessingLabel("Completed");
         setProgress(100);
         setStatus("complete");
+        toast.success("Notes are ready", {
+          id: toastIdRef.current ?? undefined,
+          description: "Markdown preview and exports are available.",
+        });
         return;
       }
     }
@@ -226,6 +291,11 @@ export function UploadCard() {
 
     if (jobId) {
       void deleteJob(jobId).catch(() => undefined);
+    }
+
+    if (toastIdRef.current) {
+      toast.dismiss(toastIdRef.current);
+      toastIdRef.current = null;
     }
 
     setSelectedFile(null);
@@ -244,6 +314,7 @@ export function UploadCard() {
       setErrorMessage(null);
       await navigator.clipboard.writeText(markdown);
       setCopySucceeded(true);
+      toast.success("Markdown copied");
 
       if (copyFeedbackTimerRef.current) {
         window.clearTimeout(copyFeedbackTimerRef.current);
@@ -253,13 +324,18 @@ export function UploadCard() {
         setCopySucceeded(false);
       }, 1600);
     } catch (error) {
-      setErrorMessage(getErrorMessage(error));
+      const nextErrorMessage = getErrorMessage(error);
+      setErrorMessage(nextErrorMessage);
+      toast.error("Copy failed", {
+        description: nextErrorMessage,
+      });
     }
   };
 
   const handleDownloadMarkdown = async () => {
     if (!jobId) {
       setErrorMessage("No completed job is available to download.");
+      toast.warning("No completed job is available");
       return;
     }
 
@@ -269,8 +345,13 @@ export function UploadCard() {
     try {
       const blob = await downloadMarkdown(jobId);
       saveBlob(blob, `${getFileStem(selectedFile?.name ?? "notes")}.md`);
+      toast.success("Markdown downloaded");
     } catch (error) {
-      setErrorMessage(getErrorMessage(error));
+      const nextErrorMessage = getErrorMessage(error);
+      setErrorMessage(nextErrorMessage);
+      toast.error("Download failed", {
+        description: nextErrorMessage,
+      });
     } finally {
       setDownloadTarget(null);
     }
@@ -279,6 +360,7 @@ export function UploadCard() {
   const handleDownloadPDF = async () => {
     if (!jobId) {
       setErrorMessage("No completed job is available to download.");
+      toast.warning("No completed job is available");
       return;
     }
 
@@ -288,8 +370,13 @@ export function UploadCard() {
     try {
       const blob = await downloadPDF(jobId);
       saveBlob(blob, `${getFileStem(selectedFile?.name ?? "notes")}.pdf`);
+      toast.success("PDF downloaded");
     } catch (error) {
-      setErrorMessage(getErrorMessage(error));
+      const nextErrorMessage = getErrorMessage(error);
+      setErrorMessage(nextErrorMessage);
+      toast.error("Download failed", {
+        description: nextErrorMessage,
+      });
     } finally {
       setDownloadTarget(null);
     }
@@ -300,42 +387,49 @@ export function UploadCard() {
 
   if (status === "complete" && selectedFile) {
     return (
-      <Card className="w-full border-border/70 bg-card/90 shadow-elevation-2 backdrop-blur-xl">
-        <CardContent className="p-4 sm:p-5">
-          <FilePickerInput inputRef={inputRef} onChange={handleFileChange} />
-          {errorMessage ? (
-            <InlineError
-              message={errorMessage}
-              onRetry={() => handleConvert()}
-              className="mb-5"
-            />
-          ) : null}
-          <motion.div
-            className="grid w-full gap-5 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)_280px]"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <UploadedPdfPanel
-              file={selectedFile}
-              statusLabel="Completed"
-              onChangePDF={handleChooseFile}
-              onRemovePDF={() => handleRemove()}
-            />
-            <MarkdownPreview markdown={markdown} />
-            <ActionsPanel
-              copySucceeded={copySucceeded}
-              downloadTarget={downloadTarget}
-              file={selectedFile}
-              markdown={markdown}
-              onCopyMarkdown={handleCopyMarkdown}
-              onDownloadMarkdown={handleDownloadMarkdown}
-              onDownloadPDF={handleDownloadPDF}
-              onStartOver={resetUpload}
-            />
-          </motion.div>
-        </CardContent>
-      </Card>
+      <div ref={resultRef}>
+        <Card className="w-full border-border/70 bg-card/90 shadow-elevation-2 backdrop-blur-xl">
+          <CardContent className="p-4 sm:p-5">
+            <FilePickerInput inputRef={inputRef} onChange={handleFileChange} />
+            {errorMessage ? (
+              <InlineError
+                message={errorMessage}
+                onRetry={() => handleConvert()}
+                className="mb-5"
+              />
+            ) : null}
+            <motion.div
+              className="grid w-full gap-5 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)_280px]"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <UploadedPdfPanel
+                file={selectedFile}
+                providerLabel={selectedProviderDetail?.label}
+                statusLabel="Completed"
+                onChangePDF={handleChooseFile}
+                onRemovePDF={() => handleRemove()}
+              />
+              <MarkdownPreview
+                copySucceeded={copySucceeded}
+                markdown={markdown}
+                onCopyMarkdown={handleCopyMarkdown}
+              />
+              <ActionsPanel
+                copySucceeded={copySucceeded}
+                downloadTarget={downloadTarget}
+                file={selectedFile}
+                markdown={markdown}
+                onCopyMarkdown={handleCopyMarkdown}
+                onDownloadMarkdown={handleDownloadMarkdown}
+                onDownloadPDF={handleDownloadPDF}
+                onStartOver={resetUpload}
+              />
+            </motion.div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 

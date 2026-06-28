@@ -15,6 +15,10 @@ class Job:
     original_filename: str
     upload_path: Path
     output_path: Path
+    requested_provider: str | None
+    provider: str | None
+    provider_label: str | None
+    fallback_provider: str | None
     status: JobStatus
     progress: int
     message: str
@@ -26,13 +30,23 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, original_filename: str) -> Job:
+    async def create(
+        self,
+        original_filename: str,
+        requested_provider: str | None = None,
+        provider: str | None = None,
+        provider_label: str | None = None,
+    ) -> Job:
         job_id = uuid4().hex
         job = Job(
             job_id=job_id,
             original_filename=Path(original_filename).name or "upload.pdf",
             upload_path=settings.upload_directory / f"{job_id}.pdf",
             output_path=settings.output_directory / f"{job_id}.md",
+            requested_provider=requested_provider,
+            provider=provider,
+            provider_label=provider_label,
+            fallback_provider=None,
             status="queued",
             progress=0,
             message="Queued",
@@ -55,6 +69,9 @@ class JobManager:
         progress: int | None = None,
         message: str | None = None,
         error: str | None = None,
+        provider: str | None = None,
+        provider_label: str | None = None,
+        fallback_provider: str | None = None,
     ) -> Job | None:
         async with self._lock:
             job = self._jobs.get(job_id)
@@ -70,6 +87,12 @@ class JobManager:
                 job.message = message
             if error is not None:
                 job.error = error
+            if provider is not None:
+                job.provider = provider
+            if provider_label is not None:
+                job.provider_label = provider_label
+            if fallback_provider is not None:
+                job.fallback_provider = fallback_provider
 
             return job
 

@@ -10,8 +10,24 @@ export type JobStatusValue =
   | "completed"
   | "failed";
 
+export type AIProviderStatus = {
+  id: string;
+  label: string;
+  model: string;
+  configured: boolean;
+  selected: boolean;
+  reason?: string;
+};
+
+export type ProviderListResponse = {
+  defaultProvider: string;
+  fallbackEnabled: boolean;
+  providers: AIProviderStatus[];
+};
+
 export type UploadJob = {
   jobId: string;
+  provider?: string;
 };
 
 export type JobStatus = {
@@ -21,6 +37,9 @@ export type JobStatus = {
   progress?: number;
   markdown?: string;
   error?: string;
+  provider?: string;
+  providerLabel?: string;
+  fallbackProvider?: string;
 };
 
 export class UploadApiError extends Error {
@@ -30,9 +49,28 @@ export class UploadApiError extends Error {
   }
 }
 
-export async function uploadPDF(file: File): Promise<UploadJob> {
+export async function getProviderStatus(): Promise<ProviderListResponse> {
+  return normalizeProviderList(await requestJson("/providers"));
+}
+
+export async function validateProviders(): Promise<ProviderListResponse> {
+  return normalizeProviderList(
+    await requestJson("/providers/validate", {
+      method: "POST",
+    }),
+  );
+}
+
+export async function uploadPDF(
+  file: File,
+  providerId?: string,
+): Promise<UploadJob> {
   const formData = new FormData();
   formData.append("file", file);
+
+  if (providerId) {
+    formData.append("provider", providerId);
+  }
 
   const data = await requestJson("/upload", {
     method: "POST",
@@ -44,7 +82,10 @@ export async function uploadPDF(file: File): Promise<UploadJob> {
     throw new UploadApiError("Upload response did not include a job id.");
   }
 
-  return { jobId };
+  return {
+    jobId,
+    provider: readString(data, ["provider"]),
+  };
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
@@ -59,6 +100,9 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
     progress: readProgress(data),
     markdown: readMarkdown(data),
     error: readString(data, ["error", "message", "detail"]),
+    provider: readString(data, ["provider"]),
+    providerLabel: readString(data, ["provider_label", "providerLabel"]),
+    fallbackProvider: readString(data, ["fallback_provider", "fallbackProvider"]),
   };
 }
 
@@ -240,6 +284,44 @@ function normalizeStatus(status: string): JobStatusValue {
   return "processing";
 }
 
+function normalizeProviderList(data: unknown): ProviderListResponse {
+  if (!isRecord(data)) {
+    throw new UploadApiError("Provider response was invalid.");
+  }
+
+  const providers = Array.isArray(data.providers) ? data.providers : [];
+  const defaultProvider =
+    readString(data, ["default_provider", "defaultProvider"]) ?? "gemini";
+
+  return {
+    defaultProvider,
+    fallbackEnabled: readBoolean(data, ["fallback_enabled", "fallbackEnabled"]),
+    providers: providers
+      .map((provider): AIProviderStatus | null => {
+        if (!isRecord(provider)) {
+          return null;
+        }
+
+        const id = readString(provider, ["id"]);
+        const label = readString(provider, ["label"]) ?? id;
+
+        if (!id || !label) {
+          return null;
+        }
+
+        return {
+          id,
+          label,
+          model: readString(provider, ["model"]) ?? "custom",
+          configured: readBoolean(provider, ["configured"]),
+          selected: readBoolean(provider, ["selected"]),
+          reason: readString(provider, ["reason"]),
+        };
+      })
+      .filter((provider): provider is AIProviderStatus => provider !== null),
+  };
+}
+
 function readProgress(data: unknown) {
   const progress = readNumber(data, ["progress", "percent", "percentage"]);
 
@@ -300,6 +382,22 @@ function readNumber(data: unknown, keys: string[]) {
   }
 
   return undefined;
+}
+
+function readBoolean(data: unknown, keys: string[]) {
+  if (!isRecord(data)) {
+    return false;
+  }
+
+  for (const key of keys) {
+    const value = data[key];
+
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

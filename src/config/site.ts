@@ -1,5 +1,6 @@
 export const siteConfig = {
-  name: "AI Notes Converter",
+  name: "Remarker AI",
   description:
-    "A foundation for converting study materials into structured notes.",
+    "Convert lecture PDFs into structured markdown study notes with provider-flexible AI.",
+  url: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
 } as const;

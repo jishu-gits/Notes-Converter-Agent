@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from starlette import status
 
-from app.models.schemas import JobStatusResponse, UploadResponse
-from app.services.gemini_service import gemini_service
+from app.core.config import settings
+from app.models.schemas import (
+    ProviderListResponse,
+    ProviderStatusResponse,
+    JobStatusResponse,
+    UploadResponse,
+)
+from app.services.ai_providers import ai_provider_service
 from app.services.job_manager import Job, job_manager
 from app.utils.files import (
     is_pdf_signature,
@@ -19,6 +25,16 @@ from app.utils.files import (
 router = APIRouter()
 
 
+@router.get("/providers", response_model=ProviderListResponse)
+async def list_providers() -> ProviderListResponse:
+    return build_provider_list_response()
+
+
+@router.post("/providers/validate", response_model=ProviderListResponse)
+async def validate_providers() -> ProviderListResponse:
+    return build_provider_list_response()
+
+
 @router.post(
     "/upload",
     response_model=UploadResponse,
@@ -27,7 +43,16 @@ router = APIRouter()
 async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    provider: str | None = Form(None),
 ) -> UploadResponse:
+    try:
+        requested_provider = ai_provider_service.normalize_requested_provider(provider)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -40,7 +65,13 @@ async def upload_pdf(
             detail="Only PDF files are supported.",
         )
 
-    job = await job_manager.create(file.filename)
+    selected_provider = ai_provider_service.resolve_provider_id(requested_provider)
+    job = await job_manager.create(
+        file.filename,
+        requested_provider=requested_provider,
+        provider=selected_provider,
+        provider_label=ai_provider_service.get_provider_label(selected_provider),
+    )
 
     try:
         await save_upload_file(file, job.upload_path)
@@ -62,7 +93,7 @@ async def upload_pdf(
     )
     background_tasks.add_task(process_job, job.job_id)
 
-    return UploadResponse(job_id=job.job_id)
+    return UploadResponse(job_id=job.job_id, provider=job.provider)
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
@@ -140,21 +171,41 @@ async def process_job(job_id: str) -> None:
         return
 
     try:
+        async def report_stage(message: str, progress: int) -> None:
+            await job_manager.update(
+                job_id,
+                status="processing",
+                progress=progress,
+                message=message,
+            )
+
         await job_manager.update(
             job_id,
             status="processing",
-            progress=20,
-            message="Extracting text",
+            progress=16,
+            message="Parsing document",
         )
-        markdown = await gemini_service.generate_markdown(
+        result = await ai_provider_service.generate_markdown(
             job.upload_path,
             job.original_filename,
+            job.requested_provider,
+            report_stage,
         )
         await job_manager.update(
             job_id,
             status="processing",
-            progress=85,
-            message="Formatting",
+            progress=82,
+            message="Formatting notes",
+            provider=result.provider_id,
+            provider_label=result.provider_label,
+            fallback_provider=result.fallback_provider_id,
+        )
+        markdown = result.markdown
+        await job_manager.update(
+            job_id,
+            status="processing",
+            progress=94,
+            message="Finalizing",
         )
         await write_text_file(job.output_path, markdown)
         await job_manager.update(
@@ -210,4 +261,28 @@ def to_status_response(job: Job) -> JobStatusResponse:
         progress=job.progress,
         message=job.message,
         error=job.error,
+        provider=job.provider,
+        provider_label=job.provider_label,
+        fallback_provider=job.fallback_provider,
+    )
+
+
+def build_provider_list_response() -> ProviderListResponse:
+    default_provider = ai_provider_service.resolve_provider_id(None)
+    provider_statuses = ai_provider_service.get_statuses(default_provider)
+
+    return ProviderListResponse(
+        default_provider=default_provider,
+        fallback_enabled=settings.ai_fallback_enabled,
+        providers=[
+            ProviderStatusResponse(
+                id=provider.id,
+                label=provider.label,
+                model=provider.model,
+                configured=provider.configured,
+                selected=provider.selected,
+                reason=provider.reason,
+            )
+            for provider in provider_statuses
+        ],
     )

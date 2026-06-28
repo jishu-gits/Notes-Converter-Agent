@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 from app.core.config import settings
 from app.models.schemas import HealthResponse
+from app.services.ai_providers import ai_provider_service
 
 
 app = FastAPI(
@@ -22,7 +23,12 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok")
+    configured_providers = [
+        provider.id
+        for provider in ai_provider_service.get_statuses()
+        if provider.configured
+    ]
+    return HealthResponse(status="ok", providers=configured_providers)
 
 
 app.include_router(router)
